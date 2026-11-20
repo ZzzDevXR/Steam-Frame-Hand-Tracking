@@ -1,0 +1,341 @@
+diff --git a/src/xrt/tracking/hand/mercury/hg_model.cpp b/src/xrt/tracking/hand/mercury/hg_model.cpp
+index 8a605df5d..da6905f18 100644
+--- a/src/xrt/tracking/hand/mercury/hg_model.cpp
++++ b/src/xrt/tracking/hand/mercury/hg_model.cpp
+@@ -16,6 +16,10 @@
+ 
+ #include <filesystem>
+ #include <array>
++#include <initializer_list>
++#include <stdexcept>
++#include <string>
++#include <vector>
+ 
+ namespace xrt::tracking::hand::mercury {
+ 
+@@ -269,6 +273,66 @@ normalizeGrayscaleImage(cv::Mat &data_in, cv::Mat &data_out)
+ 	return true;
+ }
+ 
++// Frame Hand Tracking: load `basename` (.pte) from the models folder through fhm_nn (ExecuTorch) and allocate
++// one input buffer per model input. Throws on any mismatch; the callers' try blocks report it.
++static void
++fhl_load_executorch(HandTracking *hgt, onnx_state *state, const char *basename,
++                    std::initializer_list<size_t> input_elements)
++{
++	std::filesystem::path path = hgt->models_folder;
++	path /= basename;
++	std::string error;
++	state->wraps.clear();
++	state->et = fhm_nn::load(path.string(), &error);
++	if (state->et == nullptr) {
++		throw std::runtime_error("ExecuTorch: " + error);
++	}
++	if (fhm_nn::num_inputs(state->et) != input_elements.size()) {
++		throw std::runtime_error("ExecuTorch: " + path.string() + " has an unexpected number of inputs");
++	}
++	size_t i = 0;
++	for (size_t n : input_elements) {
++		if (fhm_nn::input_elements(state->et, i++) != n) {
++			throw std::runtime_error("ExecuTorch: " + path.string() + " has an unexpected input size");
++		}
++		model_input_wrap input = {};
++		input.data = (float *)calloc(n, sizeof(float));
++		state->wraps.push_back(input);
++	}
++}
++
++// Frame Hand Tracking: the selected backend; an invalid FHL_NN_BACKEND fails model setup.
++static bool
++fhl_use_executorch()
++{
++	if (const char *error = fhm_nn::backend_error()) {
++		throw std::runtime_error(error);
++	}
++	return fhm_nn::use_executorch();
++}
++
++// Frame Hand Tracking: one forward through ExecuTorch; `outputs` point into the model until its next run.
++static void
++fhl_run_executorch(onnx_state *state, size_t num_outputs, const float **outputs, const size_t *output_elements)
++{
++	if (fhm_nn::num_outputs(state->et) != num_outputs) {
++		throw std::runtime_error("ExecuTorch: unexpected number of outputs");
++	}
++	for (size_t i = 0; i < num_outputs; i++) {
++		if (fhm_nn::output_elements(state->et, i) != output_elements[i]) {
++			throw std::runtime_error("ExecuTorch: unexpected output size");
++		}
++	}
++	std::vector<const float *> inputs;
++	for (const model_input_wrap &input : state->wraps) {
++		inputs.push_back(input.data);
++	}
++	std::string error;
++	if (!fhm_nn::run(state->et, inputs.data(), outputs, &error)) {
++		throw std::runtime_error("ExecuTorch: " + error);
++	}
++}
++
+ void
+ setup_ort_api(HandTracking *hgt, onnx_state *state, const std::filesystem::path &path)
+ {
+@@ -311,6 +375,12 @@ init_hand_detection(HandTracking *hgt, onnx_state *wrap)
+ {
+ 	std::filesystem::path path = hgt->models_folder;
+ 
++	if (fhl_use_executorch()) {
++		fhl_load_executorch(hgt, wrap, "grayscale_detection_160x160.pte",
++		                    {size_t(kDetectionInputSize) * kDetectionInputSize});
++		return;
++	}
++
+ 	path /= "grayscale_detection_160x160.onnx";
+ 
+ 	wrap->wraps.clear();
+@@ -327,7 +397,6 @@ run_hand_detection_unsafe(hand_detection_run_info *info)
+ 	ht_view *view = info->view;
+ 	HandTracking *hgt = view->hgt;
+ 	onnx_state *state = &view->detection;
+-	OnnxWrapper &wrap = *state->wrap;
+ 
+ 	cv::Mat &orig_data = view->run_model_on_this;
+ 
+@@ -349,31 +418,43 @@ run_hand_detection_unsafe(hand_detection_run_info *info)
+ 
+ 	normalizeGrayscaleImage(binned_uint8, binned_float_wrapper_mat);
+ 
+-	const OrtValue *inputs[] = {state->wraps[0].tensor};
+-	const char *input_names[] = {state->wraps[0].name};
+-
+ 	OrtValue *output_tensors[] = {nullptr, nullptr, nullptr, nullptr};
+ 	const char *output_names[] = {"hand_exists", "cx", "cy", "size"};
+ 
+-	// Actually run the inference step
+-	{
+-		XRT_TRACE_IDENT(model);
+-		static_assert(ARRAY_SIZE(input_names) == ARRAY_SIZE(inputs));
+-		static_assert(ARRAY_SIZE(output_names) == ARRAY_SIZE(output_tensors));
+-		// TODO ignoring errors, leaks OrtStatus on error
+-		ORT_SAFE(wrap, Run(wrap.session, nullptr, input_names, inputs, ARRAY_SIZE(input_names), output_names,
+-		                   ARRAY_SIZE(output_names), output_tensors));
+-	}
++	const float *hand_exists = nullptr;
++	const float *cx = nullptr;
++	const float *cy = nullptr;
++	const float *sizee = nullptr;
+ 
+-	float *hand_exists = nullptr;
+-	float *cx = nullptr;
+-	float *cy = nullptr;
+-	float *sizee = nullptr;
++	if (state->et != nullptr) {
++		XRT_TRACE_IDENT(model);
++		const float *outputs[4] = {};
++		const size_t output_elements[4] = {2, 2, 2, 2};
++		fhl_run_executorch(state, 4, outputs, output_elements);
++		hand_exists = outputs[0];
++		cx = outputs[1];
++		cy = outputs[2];
++		sizee = outputs[3];
++	} else {
++		OnnxWrapper &wrap = *state->wrap;
++		const OrtValue *inputs[] = {state->wraps[0].tensor};
++		const char *input_names[] = {state->wraps[0].name};
++
++		// Actually run the inference step
++		{
++			XRT_TRACE_IDENT(model);
++			static_assert(ARRAY_SIZE(input_names) == ARRAY_SIZE(inputs));
++			static_assert(ARRAY_SIZE(output_names) == ARRAY_SIZE(output_tensors));
++			// TODO ignoring errors, leaks OrtStatus on error
++			ORT_SAFE(wrap, Run(wrap.session, nullptr, input_names, inputs, ARRAY_SIZE(input_names),
++			                   output_names, ARRAY_SIZE(output_names), output_tensors));
++		}
+ 
+-	ORT_SAFE(wrap, GetTensorMutableData(output_tensors[0], (void **)&hand_exists));
+-	ORT_SAFE(wrap, GetTensorMutableData(output_tensors[1], (void **)&cx));
+-	ORT_SAFE(wrap, GetTensorMutableData(output_tensors[2], (void **)&cy));
+-	ORT_SAFE(wrap, GetTensorMutableData(output_tensors[3], (void **)&sizee));
++		ORT_SAFE(wrap, GetTensorMutableData(output_tensors[0], (void **)&hand_exists));
++		ORT_SAFE(wrap, GetTensorMutableData(output_tensors[1], (void **)&cx));
++		ORT_SAFE(wrap, GetTensorMutableData(output_tensors[2], (void **)&cy));
++		ORT_SAFE(wrap, GetTensorMutableData(output_tensors[3], (void **)&sizee));
++	}
+ 	hgt->fhl_detector_ran[view->view] = true;
+ 	for (int h = 0; h < 2; ++h) hgt->fhl_detector_confidence[view->view][h] = hand_exists[h];
+ 
+@@ -426,8 +507,10 @@ run_hand_detection_unsafe(hand_detection_run_info *info)
+ 	}
+ 
+ 	// Free output values allocated during Run()
+-	for (size_t i = 0; i < ARRAY_SIZE(output_tensors); i++) {
+-		wrap.api->ReleaseValue(output_tensors[i]);
++	if (state->et == nullptr) {
++		for (size_t i = 0; i < ARRAY_SIZE(output_tensors); i++) {
++			state->wrap->api->ReleaseValue(output_tensors[i]);
++		}
+ 	}
+ }
+ 
+@@ -455,6 +538,11 @@ init_keypoint_estimation(HandTracking *hgt, onnx_state *state)
+ 
+ 	std::filesystem::path path = hgt->models_folder;
+ 
++	if (fhl_use_executorch()) {
++		fhl_load_executorch(hgt, state, "grayscale_keypoint_jan18.pte", {128 * 128, 42, 1});
++		return;
++	}
++
+ 	path /= "grayscale_keypoint_jan18.onnx";
+ 
+ 	state->wraps.clear();
+@@ -638,7 +726,6 @@ static void
+ run_keypoint_estimation_unsafe(keypoint_estimation_run_info &info)
+ {
+ 	onnx_state *state = &info.view->keypoint[info.hand_idx];
+-	OnnxWrapper &wrap = *state->wrap;
+ 
+ 	struct HandTracking *hgt = info.view->hgt;
+ 
+@@ -776,18 +863,27 @@ run_keypoint_estimation_unsafe(keypoint_estimation_run_info &info)
+ 	// Ending here
+ 
+ 
+-	const OrtValue *inputs[] = {state->wraps[0].tensor, state->wraps[1].tensor, state->wraps[2].tensor};
+-	const char *input_names[] = {state->wraps[0].name, state->wraps[1].name, state->wraps[2].name};
+-	static_assert(ARRAY_SIZE(input_names) == ARRAY_SIZE(inputs));
+-
+ 	OrtValue *output_tensors[] = {nullptr, nullptr, nullptr, nullptr};
+ 	const char *output_names[] = {"heatmap_xy", "heatmap_depth", "scalar_extras", "curls"};
+ 	static_assert(ARRAY_SIZE(output_names) == ARRAY_SIZE(output_tensors));
+ 
+-	{
++	// Frame Hand Tracking: the four outputs, from ExecuTorch or from the ONNX Runtime values below.
++	const float *et_outputs[4] = {};
++	if (state->et != nullptr) {
++		XRT_TRACE_IDENT(model);
++		const size_t output_elements[4] = {21 * 22 * 22, 21 * 22, 8, 10};
++		fhl_run_executorch(state, 4, et_outputs, output_elements);
++	} else {
++		OnnxWrapper &wrap = *state->wrap;
++		const OrtValue *inputs[] = {state->wraps[0].tensor, state->wraps[1].tensor, state->wraps[2].tensor};
++		const char *input_names[] = {state->wraps[0].name, state->wraps[1].name, state->wraps[2].name};
++		static_assert(ARRAY_SIZE(input_names) == ARRAY_SIZE(inputs));
+ 		XRT_TRACE_IDENT(model);
+ 		ORT_SAFE(wrap, Run(wrap.session, nullptr, input_names, inputs, ARRAY_SIZE(input_names), output_names,
+ 		                   ARRAY_SIZE(output_names), output_tensors));
++		for (size_t i = 0; i < ARRAY_SIZE(output_tensors); i++) {
++			ORT_SAFE(wrap, GetTensorMutableData(output_tensors[i], (void **)&et_outputs[i]));
++		}
+ 	}
+ 
+ 	// To here
+@@ -795,10 +891,7 @@ run_keypoint_estimation_unsafe(keypoint_estimation_run_info &info)
+ 	// Interpret model outputs!
+ 
+ 
+-	float *out_data = nullptr;
+-
+-
+-	ORT_SAFE(wrap, GetTensorMutableData(output_tensors[0], (void **)&out_data));
++	const float *out_data = et_outputs[0];
+ 
+ 	// I don't know why this was added
+ 	// float *confidences = info.view->keypoint_outputs.views[hand_idx].confidences;
+@@ -809,7 +902,7 @@ run_keypoint_estimation_unsafe(keypoint_estimation_run_info &info)
+ 	size_t plane_size = 22 * 22;
+ 
+ 	for (int i = 0; i < 21; i++) {
+-		float *data = &out_data[i * plane_size];
++		const float *data = &out_data[i * plane_size];
+ 
+ 
+ 		// This will be optimized out if nan checking is disabled in hg_numerics_checker
+@@ -842,11 +935,10 @@ run_keypoint_estimation_unsafe(keypoint_estimation_run_info &info)
+ 	}
+ 
+ 
+-	float *out_data_depth = nullptr;
+-	ORT_SAFE(wrap, GetTensorMutableData(output_tensors[1], (void **)&out_data_depth));
++	const float *out_data_depth = et_outputs[1];
+ 
+ 	for (int joint_idx = 0; joint_idx < 21; joint_idx++) {
+-		float *p_ptr = &out_data_depth[(joint_idx * 22)];
++		const float *p_ptr = &out_data_depth[(joint_idx * 22)];
+ 
+ 
+ 		float depth = 0;
+@@ -863,8 +955,7 @@ run_keypoint_estimation_unsafe(keypoint_estimation_run_info &info)
+ 		}
+ 	}
+ 
+-	float *out_data_extras = nullptr;
+-	ORT_SAFE(wrap, GetTensorMutableData(output_tensors[2], (void **)&out_data_extras));
++	const float *out_data_extras = et_outputs[2];
+ 
+ 	float is_hand_explicit = out_data_extras[0];
+ 
+@@ -883,8 +974,7 @@ run_keypoint_estimation_unsafe(keypoint_estimation_run_info &info)
+ 	hgt->fhl_is_hand[hand_idx][view_idx] = is_hand_explicit;
+ 
+ 
+-	float *out_data_curls = nullptr;
+-	ORT_SAFE(wrap, GetTensorMutableData(output_tensors[3], (void **)&out_data_curls));
++	const float *out_data_curls = et_outputs[3];
+ 
+ 	for (int i = 0; i < 5; i++) {
+ 		float curl = out_data_curls[i];
+@@ -971,8 +1061,10 @@ run_keypoint_estimation_unsafe(keypoint_estimation_run_info &info)
+ 		}
+ 	}
+ 
+-	for (size_t i = 0; i < ARRAY_SIZE(output_tensors); i++) {
+-		wrap.api->ReleaseValue(output_tensors[i]);
++	if (state->et == nullptr) {
++		for (size_t i = 0; i < ARRAY_SIZE(output_tensors); i++) {
++			state->wrap->api->ReleaseValue(output_tensors[i]);
++		}
+ 	}
+ }
+ 
+@@ -995,12 +1087,15 @@ run_keypoint_estimation(void *ptr)
+ void
+ release_onnx_state(onnx_state *state)
+ {
+-	OnnxWrapper &wrap = *state->wrap;
+-
+ 	for (model_input_wrap &a : state->wraps) {
+-		wrap.api->ReleaseValue(a.tensor);
++		if (state->wrap != nullptr && a.tensor != nullptr) {
++			state->wrap->api->ReleaseValue(a.tensor);
++		}
+ 		free(a.data);
+ 	}
++	state->wraps.clear();
++	fhm_nn::destroy(state->et);
++	state->et = nullptr;
+ }
+ 
+ } // namespace xrt::tracking::hand::mercury
+diff --git a/src/xrt/tracking/hand/mercury/hg_sync.hpp b/src/xrt/tracking/hand/mercury/hg_sync.hpp
+index 3c510e56e..55e14e405 100644
+--- a/src/xrt/tracking/hand/mercury/hg_sync.hpp
++++ b/src/xrt/tracking/hand/mercury/hg_sync.hpp
+@@ -18,6 +18,7 @@
+ #include "tracking/t_camera_models.h"
+ 
+ #include "onnx/onnx_wrapper.hpp"
++#include "fhm_nn.h"
+ 
+ #include "xrt/xrt_defines.h"
+ #include "xrt/xrt_frame.h"
+@@ -159,6 +160,8 @@ struct model_input_wrap
+ struct onnx_state
+ {
+ 	std::unique_ptr<OnnxWrapper> wrap = {};
++	// Frame Hand Tracking: set instead of `wrap` when FHL_NN_BACKEND=executorch (fhm_nn.h).
++	fhm_nn::Model *et = nullptr;
+ 
+ 	std::vector<model_input_wrap> wraps = {};
+ };

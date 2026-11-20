@@ -1,0 +1,58 @@
+--- a/src/xrt/tracking/hand/mercury/hg_model.cpp
++++ b/src/xrt/tracking/hand/mercury/hg_model.cpp
+@@ -16,6 +16,7 @@
+ 
+ #include <filesystem>
+ #include <array>
++#include <cstring>
+ #include <initializer_list>
+ #include <stdexcept>
+ #include <string>
+@@ -146,15 +147,15 @@
+ }
+ 
+ static bool
+-hand_depth_center_of_mass(struct HandTracking *hgt, float data[22], float *out_depth, float *out_confidence)
++hand_depth_center_of_mass(struct HandTracking *hgt, const float data[22], float *out_depth, float *out_confidence)
+ {
+ 	float avg_location_px_coord = 0;
+ 	float sum = 0;
+ 
+ 	for (int i = 0; i < 22; i++) {
+-		data[i] = fmin(1.0, fmax(data[i], 0.0));
+-		sum += data[i];
+-		avg_location_px_coord += data[i] * (float)i;
++		const float clamped = fmin(1.0, fmax(data[i], 0.0));
++		sum += clamped;
++		avg_location_px_coord += clamped * (float)i;
+ 	}
+ 
+ 	if (sum < 1e-5) {
+@@ -665,7 +666,7 @@
+ };
+ 
+ void
+-make_keypoint_heatmap_output(int camera_idx, int hand_idx, int grid_pt_x, int grid_pt_y, float *plane, cv::Mat &out)
++make_keypoint_heatmap_output(int camera_idx, int hand_idx, int grid_pt_x, int grid_pt_y, const float *plane, cv::Mat &out)
+ {
+ 	int root_x = 8 + ((1 + 2 * hand_idx) * (128 + 8));
+ 	int root_y = 8 + ((2 * camera_idx) * (128 + 8));
+@@ -675,7 +676,8 @@
+ 	cv::Rect p = cv::Rect(org_x, org_y, 22, 22);
+ 
+ 
+-	cv::Mat start(cv::Size(22, 22), CV_32FC1, plane, 22 * sizeof(float));
++	cv::Mat start(cv::Size(22, 22), CV_32FC1);
++	std::memcpy(start.data, plane, 22 * 22 * sizeof(float));
+ 	start *= 255.0;
+ 
+ 	start.copyTo(out(p));
+@@ -686,7 +688,7 @@
+                                    int hand_idx,   //
+                                    int grid_pt_x,  //
+                                    int grid_pt_y,
+-                                   float *plane, //
++                                   const float *plane, //
+                                    cv::Mat &out)
+ {
+ 	int root_x = 8 + ((1 + 2 * hand_idx) * (128 + 8));

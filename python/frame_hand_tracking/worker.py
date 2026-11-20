@@ -3,6 +3,7 @@ import itertools
 import json
 import os
 from pathlib import Path
+import signal
 import time
 import numpy as np
 
@@ -161,6 +162,13 @@ def run(controls_path, calibration, duration=60, fps=20, detector_orientation=0,
     stamp = controls_stamp(controls_path)
     hand_status = (HandStatus(), HandStatus())
     errors, retry_delay, retry_at = ErrorLog(), 0., 0.
+    stop_requested = False
+
+    def request_stop(_signum, _frame):
+        nonlocal stop_requested
+        stop_requested = True
+
+    previous_sigterm = signal.signal(signal.SIGTERM, request_stop)
 
     def working():
         nonlocal retry_delay
@@ -169,7 +177,7 @@ def run(controls_path, calibration, duration=60, fps=20, detector_orientation=0,
         if line:
             print(line, flush=True)
 
-    while time.monotonic() - started < duration:
+    while not stop_requested and time.monotonic() - started < duration:
         now = time.monotonic()
         if now < next_frame:
             time.sleep(min(next_frame - now, .05))
@@ -265,6 +273,7 @@ def run(controls_path, calibration, duration=60, fps=20, detector_orientation=0,
         backend.close()
     source.close()
     status_file.write('stopped', 'stopped')
+    signal.signal(signal.SIGTERM, previous_sigterm)
 
 
 def main():

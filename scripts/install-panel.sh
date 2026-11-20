@@ -69,7 +69,7 @@ Environment=FHL_FCA_LIBRARY=$fca/build/libframe_camera_access.so
 ExecStart=/bin/bash $root/run.sh --service --tracker $tracker
 Restart=on-failure
 RestartSec=5
-TimeoutStopSec=10
+TimeoutStopSec=30
 
 [Install]
 WantedBy=steamvr.service

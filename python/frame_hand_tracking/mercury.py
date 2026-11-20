@@ -185,15 +185,25 @@ class MercuryBackend:
         if self.native.fhm_abi_version() != 1 or self.native.fhm_source_revision().decode() != REVISION:
             raise RuntimeError('Mercury bridge ABI or pinned upstream revision mismatch')
         models_dir = models_dir or os.environ.get('FHL_MERCURY_MODELS_DIR')
-        self.models_dir = Path(models_dir) if models_dir else Path(__file__).resolve().parents[2]/'models'/'fp16'
-        digests = {}
-        for name in MODEL_HASHES:
-            path = self.models_dir / name
-            if not path.is_file():
-                raise ValueError(f'Missing native Mercury model: {path}')
-            digests[name] = hashlib.sha256(path.read_bytes()).hexdigest()
-        if digests not in MODEL_VARIANTS.values():
-            raise ValueError(f'Unpinned native Mercury models in {self.models_dir}')
+        executorch = os.environ.get('FHL_NN_BACKEND') == 'executorch'
+        default_dir = Path(__file__).resolve().parents[2]/'models'/('executorch' if executorch else 'fp16')
+        self.models_dir = Path(models_dir) if models_dir else default_dir
+        if executorch:
+            # The .pte files are generated from the pinned fp32 models by models/export_executorch.py, which
+            # checks them against ONNX Runtime and records them in manifest.json.
+            for name in MODEL_HASHES:
+                path = self.models_dir / name.replace('.onnx', '.pte')
+                if not path.is_file():
+                    raise ValueError(f'Missing native Mercury model: {path}')
+        else:
+            digests = {}
+            for name in MODEL_HASHES:
+                path = self.models_dir / name
+                if not path.is_file():
+                    raise ValueError(f'Missing native Mercury model: {path}')
+                digests[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+            if digests not in MODEL_VARIANTS.values():
+                raise ValueError(f'Unpinned native Mercury models in {self.models_dir}')
         self.parameters = dict(parameters or {})
         self.has_quality = hasattr(self.native, 'fhm_get_quality')
         if self.has_quality:

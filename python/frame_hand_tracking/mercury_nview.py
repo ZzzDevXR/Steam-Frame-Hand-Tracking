@@ -121,8 +121,11 @@ class NViewBackend:
     def process(self, images, cameras=None, timestamp_ns=0):
         cameras = cameras or self.cameras
         timestamp_ns = int(timestamp_ns)
+        # Opening the ExecuTorch delegate can take longer than the ordinary frame-gap limit.
+        # Keep its model handles across that first slow frame so acquisition can advance.
+        reset_gap_ns = 2_000_000_000 if os.environ.get('FHL_NN_BACKEND') == 'executorch' else 250_000_000
         if self.last_timestamp is not None and (timestamp_ns <= self.last_timestamp or
-                                                timestamp_ns - self.last_timestamp > 250_000_000):
+                                                timestamp_ns - self.last_timestamp > reset_gap_ns):
             self.reset()
         self.last_timestamp = timestamp_ns
         result = {'hands': []}
