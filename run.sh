@@ -18,7 +18,7 @@ from controls.json in the same folder when that file changes.
 EOF
 }
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-python=${FHT_PYTHON:-$root/.venv/bin/python}
+python=${FHT_PYTHON:-$root/runtime/bin/python3}
 duration=3600
 hand_ray=1
 calibration=${FHT_CALIBRATION:-$root/calibration/estimated-calibration.json}
@@ -50,9 +50,9 @@ export LD_LIBRARY_PATH="$root/build/lib"
 unset LD_PRELOAD PYTHONHOME
 
 test "$(uname -m)" = aarch64 || { echo 'Run on the Frame (Linux aarch64).' >&2; exit 2; }
-test -x "$python" || { echo "Python environment missing: scripts/setup-python.sh" >&2; exit 2; }
+test -x "$python" || { echo "Python runtime missing ($python): bash scripts/setup-python.sh" >&2; exit 2; }
 test -f "$FHL_MERCURY_LIBRARY" || { echo "Mercury library missing: mercury/build.sh" >&2; exit 2; }
-test -d "$FHL_MERCURY_MODELS_DIR" || { echo "Models missing: .venv/bin/python models/fetch_models.py --fp16" >&2; exit 2; }
+test -d "$FHL_MERCURY_MODELS_DIR" || { echo "Models missing: runtime/bin/python3 models/fetch_models.py --fp16" >&2; exit 2; }
 test -f "$calibration" || { echo "Camera rig missing: $calibration" >&2; exit 2; }
 test -f "$FHL_FCA_LIBRARY" || { echo "Camera access client missing ($FHL_FCA_LIBRARY): build ../Steam-Frame-Camera-Access (bash scripts/build.sh), or set FHL_FCA_LIBRARY" >&2; exit 2; }
 state=${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/frame-hand-tracking

@@ -31,11 +31,10 @@ What the command does ([install.sh](install.sh), worth reading before you pipe i
   [Steam-Frame-Camera-Access](https://github.com/ZzzDevXR/Steam-Frame-Camera-Access) into your home folder
   (`~/Steam-Frame-Hand-Tracking`, `~/Steam-Frame-Camera-Access`) and checks their SHA-256;
 - installs the camera service as root (`/var/lib/frame-camera-access`, the only part that needs `sudo`);
-- installs the Python packages (numpy, OpenCV, ONNX Runtime) into a private folder inside
-  `~/Steam-Frame-Hand-Tracking`;
+- uses the Python that comes inside the release (`runtime/`, with numpy and OpenCV);
 - registers the SteamVR driver and three user services. Nothing else is installed system-wide.
 
-It takes about half a minute and needs internet access and the headset's own `python3.12` and `curl`.
+It takes about half a minute and needs internet access and `curl`.
 
 Run the same command again to update. To use only the two SLAM cameras instead of all four:
 
@@ -77,7 +76,7 @@ sudo bash scripts/install-daemon.sh
 # 2. The hand tracking
 cd ../Steam-Frame-Hand-Tracking
 bash scripts/setup-python.sh --tools
-.venv/bin/python models/fetch_models.py --fp16
+runtime/bin/python3 models/fetch_models.py --fp16
 bash mercury/build.sh
 sh hand-ray/build.sh && sh hand-ray/install.sh
 bash scripts/install-panel.sh                 # all four cameras; --tracker two: the SLAM pair only

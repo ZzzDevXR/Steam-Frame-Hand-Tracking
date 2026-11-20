@@ -4,7 +4,9 @@ DIR="$(cd "$(dirname "$0")" && pwd)/driver/frame_hand_ray"
 VRPATHS="$HOME/.config/openvr/openvrpaths.vrpath"
 VRPATHREG=/opt/steamvr/bin/linuxarm64/vrpathreg
 [ -f "$DIR/bin/linuxarm64/driver_frame_hand_ray.so" ] || { echo "Driver not built. Run ./build.sh first."; exit 1; }
-OTHER=$(python3 - "$VRPATHS" "$DIR" <<'PY'
+PYTHON="$(cd "$(dirname "$0")/.." && pwd)/runtime/bin/python3"
+[ -x "$PYTHON" ] || PYTHON=python3
+OTHER=$("$PYTHON" - "$VRPATHS" "$DIR" <<'PY'
 import json, os, sys
 try:
     paths = json.load(open(sys.argv[1])).get("external_drivers") or []

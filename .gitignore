@@ -3,6 +3,7 @@
 /hand-ray/build/
 /hand-ray/driver/frame_hand_ray/bin/
 /.venv/
+/runtime/
 __pycache__/
 *.pyc
 

@@ -10,7 +10,8 @@
 | ONNX Runtime 1.22.1 | the six C/C++ API headers are stored unmodified in `mercury/third_party/onnxruntime/include/`; the library comes from the `onnxruntime` wheel | MIT (`mercury/third_party/onnxruntime/LICENSE`) |
 | OpenCV 4.6.0 | core + imgproc built from source by `mercury/build.sh`; the prebuilt release ships them unmodified in `build/lib/` | Apache-2.0 (`build/lib/LICENSE-opencv.txt` in the release) |
 | Eigen 3.4.0 | headers (Debian package, unpacked at build time), compiled into the Mercury library; source: <https://gitlab.com/libeigen/eigen/-/tree/3.4.0> | MPL-2.0 |
-| numpy, opencv-python-headless, onnxruntime | Python runtime (`requirements.txt`) | BSD-3-Clause / Apache-2.0 + MIT / MIT |
+| CPython 3.12 ([python-build-standalone](https://github.com/astral-sh/python-build-standalone) `20261110`) | downloaded by `scripts/setup-python.sh` into `runtime/`; the prebuilt release includes it | PSF-2.0, plus the licenses of the libraries it links (`runtime/lib/python3.12/LICENSE.txt` in the release) |
+| numpy, opencv-python-headless, onnxruntime | Python packages (`requirements.txt`), installed into `runtime/`; the prebuilt release includes numpy and opencv-python-headless unmodified (the tracker uses ONNX Runtime through `build/lib/`) | BSD-3-Clause / Apache-2.0 + MIT / MIT (each wheel's license files are in its `dist-info` folder) |
 | onnx, onnxconverter-common, protobuf | fp16 model conversion (`requirements-tools.txt`) | Apache-2.0 / MIT / BSD-3-Clause |
 
 Prior art credited in the driver (no code copied): frame-unboundedMouse (Andalu30, MIT) and frametop

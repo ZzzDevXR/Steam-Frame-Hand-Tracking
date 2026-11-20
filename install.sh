@@ -4,8 +4,8 @@
 #   curl -fsSL https://raw.githubusercontent.com/ZzzDevXR/Steam-Frame-Hand-Tracking/main/install.sh | sudo bash
 #
 # It downloads the prebuilt releases of this repository and of Steam-Frame-Camera-Access into your home folder
-# (FRAME_INSTALL_DIR sets another parent folder), installs the camera service as root, and sets up the Python
-# packages, the SteamVR driver and the dashboard panel for your user. Run it again to update.
+# (FRAME_INSTALL_DIR sets another parent folder), installs the camera service as root, and sets up the SteamVR
+# driver and the dashboard panel for your user. Run it again to update.
 #   --tracker nview|two   all four cameras (default), or only the two SLAM cameras
 #   --build               clone the source with git and compile everything on the headset instead
 # Piped, with options: curl ... | sudo bash -s -- --tracker two
@@ -77,7 +77,7 @@ main() {
       as_user git clone --quiet --depth 1 "$1" "$2"
     fi
   }
-  unpack() { # bundle-file-or-url folder: replaces the folder with the release bundle, keeping its .venv
+  unpack() { # bundle-file-or-url folder: replaces the folder with the release bundle
     local source=$1 folder=$2 expected actual
     [[ ! -e $folder || -f $folder/RELEASE ]] ||
       die "$folder exists and was not put there by this installer; move it away or set FRAME_INSTALL_DIR"
@@ -97,7 +97,6 @@ main() {
     as_user mkdir "$scratch/new"
     as_user tar -xzf "$scratch/bundle.tar.gz" -C "$scratch/new"
     [[ -f $scratch/new/RELEASE ]] || die "$source is not a release bundle"
-    if [[ -d $folder/.venv ]]; then as_user mv "$folder/.venv" "$scratch/new/.venv"; fi
     if [[ -e $folder ]]; then as_user rm -rf -- "$folder"; fi
     as_user mv "$scratch/new" "$folder"
     cleanup
@@ -116,11 +115,9 @@ main() {
   fi
   camera=${FCA_SOURCE_DIR:-$(dirname -- "$root")/Steam-Frame-Camera-Access}
 
-  require python3 sha256sum taskset
-  { command -v python3.12 || python3 -c 'import sys; sys.exit(sys.version_info[:2] != (3, 12))'; } > /dev/null 2>&1 ||
-    die "Python 3.12 is missing on this headset"
+  require sha256sum taskset
   if ((build)); then
-    require git
+    require git curl tar
     require_compilers
     if ((piped)); then clone "$repository" "$root"; fi
     if [[ ! -f $camera/CMakeLists.txt || -d $camera/.git ]]; then clone "$camera_repository" "$camera"; fi
@@ -132,6 +129,24 @@ main() {
     fi
   fi
 
+  check_libraries() { # files...: stops if a prebuilt program needs a system library this headset does not have
+    local file missing
+    command -v ldd > /dev/null || return 0
+    for file in "$@"; do
+      [[ -f $file ]] || die "$file is missing from the release"
+      missing=$(as_user env LD_LIBRARY_PATH="$(dirname -- "$file")" ldd "$file" 2> /dev/null |
+        awk '/not found/ { print $1 }' | sort -u | tr '\n' ' ')
+      [[ -z $missing ]] ||
+        die "$(basename -- "$file") needs system libraries this headset does not have: $missing(please report it: $repository/issues)"
+    done
+  }
+  if ((!build)); then
+    check_libraries "$camera/build/frame-camera-accessd" "$camera/build/frame-camera-access-prompt" \
+      "$camera/build/libframe_camera_access.so" "$root/build/lib/libframehand_mercury_v10.so" \
+      "$root/hand-ray/driver/frame_hand_ray/bin/linuxarm64/driver_frame_hand_ray.so" \
+      "$root/panel/build/frame-hand-tracking-panel" "$root/runtime/bin/python3"
+  fi
+
   step "Camera access service"
   if ((build)) || [[ ! -f $camera/build/frame-camera-accessd ]]; then
     require_compilers
@@ -139,15 +154,13 @@ main() {
   fi
   bash "$camera/scripts/install-daemon.sh"
 
-  step "Python packages"
   if ((build)); then
+    step "Python runtime"
     as_user bash "$root/scripts/setup-python.sh" --tools
-  else
-    as_user bash "$root/scripts/setup-python.sh"
   fi
 
   step "Hand tracking models"
-  as_user "$root/.venv/bin/python" "$root/models/fetch_models.py" --fp16
+  as_user "$root/runtime/bin/python3" "$root/models/fetch_models.py" --fp16
 
   if ((build)); then
     step "Mercury hand tracker (the long step: it builds OpenCV the first time)"

@@ -4,7 +4,7 @@ set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 root=$(dirname -- "$here")
 work=${FHT_BUILD_DIR:-$root/build/mercury}
-python=${FHT_PYTHON:-$root/.venv/bin/python}
+python=${FHT_PYTHON:-$root/runtime/bin/python3}
 jobs=${FHT_JOBS:-$(nproc)}
 monado_url=https://gitlab.freedesktop.org/monado/monado.git
 monado_commit=ec188bb137b6af93120e015a8df100046a34d8f0
@@ -19,7 +19,7 @@ for arg in "$@"; do
 done
 test "$(uname -m)" = aarch64 || { echo 'Build on the Frame (Linux aarch64).' >&2; exit 2; }
 if [ -z "${FHT_ORT_LIB:-}" ]; then
-  test -x "$python" || { echo "Python environment missing ($python): run scripts/setup-python.sh first." >&2; exit 2; }
+  test -x "$python" || { echo "Python runtime missing ($python): run scripts/setup-python.sh first." >&2; exit 2; }
 fi
 mkdir -p "$work"
 
@@ -36,7 +36,7 @@ fi
 
 deps=$work/deps
 if [ ! -f "$deps/download-manifest.json" ]; then
-  /usr/bin/python3 "$here/fetch_deps.py" "$deps"
+  "${python:-python3}" "$here/fetch_deps.py" "$deps"
 fi
 ort_lib=${FHT_ORT_LIB:-$("$python" -c 'import onnxruntime, os; print(os.path.join(os.path.dirname(onnxruntime.__file__), "capi", "libonnxruntime.so.1.22.1"))')}
 test -f "$ort_lib" || { echo "onnxruntime 1.22.1 library not found ($ort_lib)" >&2; exit 2; }

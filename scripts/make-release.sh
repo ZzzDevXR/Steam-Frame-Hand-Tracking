@@ -19,7 +19,8 @@ test -f "$opencv_license" || { echo "OpenCV license not found ($opencv_license)"
 
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
-tar -C "$root" --exclude=./.git --exclude=./.idea --exclude=./.venv --exclude=./build --exclude=./dist \
+tar -C "$root" --exclude=./.git --exclude=./.idea --exclude=./.venv --exclude=./runtime --exclude=./build \
+  --exclude=./dist \
   --exclude=./panel/build --exclude=__pycache__ --exclude='*.pyc' -cf - . | tar -C "$stage" -xf -
 mkdir -p "$stage/build" "$stage/panel/build"
 cp -a "$root/build/lib" "$stage/build/lib"
@@ -33,8 +34,14 @@ Prebuilt for the Steam Frame (Linux aarch64) by scripts/make-release.sh:
                                and Eigen 3.4.0 (MPL-2.0, https://gitlab.com/libeigen/eigen/-/tree/3.4.0)
   libopencv_core, _imgproc     OpenCV 4.6.0, unmodified (Apache-2.0, LICENSE-opencv.txt)
   libonnxruntime               ONNX Runtime 1.22.1, from the onnxruntime wheel (MIT, LICENSE-onnxruntime.txt)
+The release also carries ../../runtime/: CPython 3.12 from python-build-standalone
+(https://github.com/astral-sh/python-build-standalone; PSF-2.0 and the licenses of the libraries it links,
+see runtime/lib/python3.12/LICENSE.txt) with the numpy and opencv-python-headless wheels, whose licenses are
+in runtime/lib/python3.12/site-packages/*.dist-info/.
 mercury/build.sh rebuilds all of it from source.
 EOF
+# The Python the tracker runs on, with only the packages it imports
+FHT_RUNTIME="$stage/runtime" bash "$root/scripts/setup-python.sh" --release
 printf '%s\n' "$version" > "$stage/RELEASE"
 
 mkdir -p "$root/dist"
